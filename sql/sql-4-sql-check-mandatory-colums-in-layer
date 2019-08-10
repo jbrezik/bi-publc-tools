@@ -1,0 +1,68 @@
+/* This SQL4SQL script generates statement for mandatory columns check based on Teradata *
+ * metadata table dbc.Columns                                                            *
+ * Use case for datawarehouses where mandatory fields are not alligned between layers    *
+ * meaning that staging layer can have nullable fields, where core layer is expecting    *
+ * already defined values.                                                               *
+ * This script assuming the similar structure in column naming convention and checks     *
+ * that consecutively defined layer has all mandatory fields loaded and reports count    *
+ * and column name otherwise.                                                            *
+ * Copy the generate statement and excecute as a new statement.                          *
+ *                                                                                       *
+ * Author  : Jakub Brezik                                                                *
+ * Database : Teradata                                                                   *
+ * Dependencies : Try SELECT * FROM dbc.FunctionsV WHERE FunctionName = 'XMLAGG';        *
+ *                                                                                       *
+ * *** Version History ***                                                               *
+ * 2019-08-09 * Jakub Brezik * First Written                                             *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+ 
+select 
+ 'select' || x'0A' || ' MandatoryColumnName,' || x'0A' || ' count(*) as NullCount' || 
+ x'0A' || 'from (select' || g1.CaseStatement || '  end as MandatoryColumnName'|| 
+ g1.FromStatement || g1.WhereStatement || g1.GroupStatement || ') g2' || 
+ x'0A' || 'group by MandatoryColumnName' || x'0A' || ';' as GeneratedStatement
+from
+(select 
+  x'0A' || '  case' || (xmlagg(' when ' || dcv1.ColumnName || ' is null then ''' || dcv1.ColumnName || '''' || x'0A' order by dcv1.ColumnName) (VARCHAR(4000))) as CaseStatement,
+   /* Enter database and table where the mandatory check is due */
+  x'0A' || ' from database_schema.table_name' as FromStatement,
+  x'0A' || ' where ' || regexp_replace((xmlagg(dcv1.ColumnName || ' is null' || x'0A' || '  or' order by dcv1.ColumnName) (VARCHAR(4000))),'or+$') as WhereStatement,
+  'group by ' || trim(trailing ',' from (xmlagg(dcv1.ColumnName || ',' order by dcv1.ColumnName) (VARCHAR(4000)))) as GroupStatement
+ from dbc.ColumnsV dcv1
+  where dcv1.Nullable = 'N' 
+   /* Enter database schema of the original of model table */
+  and dcv1.DatabaseName = 'database_schema'
+   /* Enter table name of model table where nullable colums are defined */
+  and dcv1.TableName = 'table_name'
+   /* Following are mandatory columns by design, usually technical fields */
+  and dcv1.ColumnName not in ('KEY_ID','SOURCE_ID')
+ group by dcv1.TableName) as g1
+;
+
+/*
+  Sample generated output
+*/
+
+select
+ MandatoryColumnName,
+ count(*) as NullCount
+from (select
+  case when GENERIC_PK is null then 'GENERIC_PK'
+  when GENERIC_FK is null then 'GENERIC_FK'
+  end as MandatoryColumnName
+ from DBC.GENERIC_TEMPORARY_TABLE
+ where GENERIC_PK is null
+  or GENERIC_FK is null
+  group by GENERIC_PK, GENERIC_FK) g2
+group by MandatoryColumnName
+;
+
+/*
+  Sample generated result
+*/
+
+MandatoryColumnName|NullCount|
+-------------------|---------|
+GENERIC_PK         |        2|
+GENERIC_FK         |        1|
+
